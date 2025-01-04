@@ -1,61 +1,86 @@
-use rusttype::{Font, Scale};
-use std::fs;
-use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+mod state;
+
+use rusttype::{point, Font};
+use state::FontsState;
+use tauri::State;
+
+type RasterizedGlyph = Vec<Vec<u8>>;
 
 #[tauri::command]
-fn list_fonts(app: AppHandle) -> Vec<String> {
-    let mut fonts = vec!["Arial".to_string(), "Times New Roman".to_string()];
-    if let Some(app_dir) = app.path().app_data_dir().ok() {
-        let user_fonts_dir = app_dir.join("user_fonts");
-        if let Ok(entries) = fs::read_dir(user_fonts_dir) {
-            for entry in entries.flatten() {
-                if let Ok(file_name) = entry.file_name().into_string() {
-                    fonts.push(file_name);
-                }
+async fn rasterize_glyphs(
+    state: State<'_, FontsState>,
+    font_name: String,
+    starting_glyph: u32,
+    glyph_count: u32,
+    glyph_width: f32,
+    glyph_height: f32,
+    channel: tauri::ipc::Channel<RasterizedGlyph>,
+) -> Result<(), String> {
+    let state = state.lock().await;
+    let font = state.loaded_fonts.get(&font_name).ok_or("Font not found")?;
+    let scale = rusttype::Scale {
+        y: glyph_height,
+        x: glyph_width,
+    };
+
+    for glyph_id in starting_glyph..(starting_glyph + glyph_count) {
+        let Some(character) = char::from_u32(glyph_id as u32) else {
+            continue;
+        };
+
+        let glyph = font
+            .glyph(character)
+            .scaled(scale)
+            .positioned(point(0.0, 0.0));
+
+        if let Some(bb) = glyph.pixel_bounding_box() {
+            let width = bb.width() as usize;
+            let height = bb.height() as usize;
+            let mut pixmap = vec![vec![0u8; width]; height];
+
+            glyph.draw(|x, y, v| {
+                let y = y as usize;
+                let x = x as usize;
+                pixmap[y][x] = (v * 255.0) as u8;
+            });
+
+            if let Err(e) = channel.send(pixmap) {
+                return Err(format!("Failed to send pixels: {}", e));
             }
         }
     }
-    fonts
+
+    Ok(())
 }
 
 #[tauri::command]
-fn import_font(app: AppHandle, path: String) -> Result<(), String> {
-    if let Some(app_dir) = app.path().app_data_dir().ok() {
-        let user_fonts_dir = app_dir.join("user_fonts");
-        fs::create_dir_all(&user_fonts_dir).unwrap();
-        let font_name = PathBuf::from(&path)
-            .file_name()
-            .ok_or("Invalid file name")?
-            .to_str()
-            .ok_or("Invalid UTF-8")?
-            .to_string();
-        let dest = user_fonts_dir.join(&font_name);
-        fs::copy(&path, dest).map_err(|e| e.to_string())?;
-        Ok(())
-    } else {
-        Err("Failed to determine app directory".to_string())
-    }
-}
+async fn load_font(
+    path: std::path::PathBuf,
+    state: State<'_, FontsState>,
+) -> Result<String, String> {
+    let data = std::fs::read(&path)
+        .map_err(|err| format!("Failed to read font file '{}': {}", path.display(), err))?;
 
-#[tauri::command]
-fn render_text(text: String, font_name: String) -> String {
-    let font_data = include_bytes!("../../assets/Roboto-Regular.ttf"); // Default font
-    let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
-    let scale = Scale::uniform(40.0);
-    let glyphs: Vec<_> = font
-        .layout(&text, scale, rusttype::point(0.0, 0.0))
-        .collect();
-    format!("Rendered {} glyphs", glyphs.len()) // Example, replace with actual rendering logic
+    let font = Font::try_from_vec(data)
+        .ok_or_else(|| format!("Failed to parse font file '{}'", path.display()))?;
+
+    let font_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown Font")
+        .to_string();
+
+    let mut state = state.lock().await;
+    state.loaded_fonts.insert(font_name.clone(), font);
+
+    Ok(font_name)
 }
 
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![
-            list_fonts,
-            import_font,
-            render_text
-        ])
+        .plugin(tauri_plugin_dialog::init())
+        .manage(FontsState::default())
+        .invoke_handler(tauri::generate_handler![load_font, rasterize_glyphs])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
 }
