@@ -1,12 +1,18 @@
 <script lang="ts">
     import { invoke, Channel } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
+    import { centerPixmap } from "$lib/utils/pixmap";
 
     type PixelMap = number[][];
 
     let loadedFonts = $state<string[]>([]);
     let selectedFont = $state("");
     let glyphPixmaps = $state<PixelMap[]>([]);
+
+    // Add new state variables for the controls
+    let startingGlyph = $state(20);
+    let glyphCount = $state(100);
+    let glyphSize = $state(48);
 
     async function handleLoadFont() {
         try {
@@ -24,7 +30,6 @@
                     path: selected,
                 });
 
-                // Add the new font to the list if not already present
                 if (!loadedFonts.includes(fontName as string)) {
                     loadedFonts.push(fontName as string);
                 }
@@ -48,16 +53,17 @@
 
         channel.onmessage = (pixmap: number[][]) => {
             console.log(pixmap);
+            pixmap = centerPixmap(pixmap, glyphSize, glyphSize);
             glyphPixmaps = [...glyphPixmaps, pixmap];
         };
 
         try {
-            await invoke("rasterize_glyphs", {
+            invoke("rasterize_glyphs", {
                 fontName: selectedFont,
-                startingGlyph: 20,
-                glyphCount: 100,
-                glyphWidth: 48.0,
-                glyphHeight: 48.0,
+                startingGlyph,
+                glyphCount,
+                glyphWidth: glyphSize,
+                glyphHeight: glyphSize,
                 channel,
             });
         } catch (error) {
@@ -80,6 +86,39 @@
                 <option value={font}>{font}</option>
             {/each}
         </select>
+
+        <div class="number-input">
+            <label for="starting-glyph">Start at:</label>
+            <input
+                type="number"
+                id="starting-glyph"
+                min="0"
+                bind:value={startingGlyph}
+            />
+        </div>
+
+        <div class="number-input">
+            <label for="glyph-count">Count:</label>
+            <input
+                type="number"
+                id="glyph-count"
+                min="1"
+                max="1000"
+                bind:value={glyphCount}
+            />
+        </div>
+
+        <div class="number-input">
+            <label for="glyph-size">Size:</label>
+            <input
+                type="number"
+                id="glyph-size"
+                min="8"
+                max="128"
+                step="8"
+                bind:value={glyphSize}
+            />
+        </div>
 
         <button onclick={handleRasterize} disabled={!selectedFont}>
             Rasterize
@@ -120,6 +159,23 @@
         display: flex;
         gap: 16px;
         align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .number-input {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .number-input input {
+        width: 70px;
+        padding: 8px;
+    }
+
+    .number-input label {
+        font-size: 14px;
+        white-space: nowrap;
     }
 
     button {

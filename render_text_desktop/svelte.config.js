@@ -10,6 +10,10 @@ const config = {
   kit: {
     adapter: adapter(),
   },
+  alias: {
+    // This alias is required to make '$lib' work
+    $lib: "./src/lib",
+  },
 };
 
 export default config;
