@@ -2,6 +2,7 @@
     import { invoke, Channel } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
     import { centerPixmap } from "$lib/utils/pixmap";
+    import { tick } from "svelte";
 
     type PixelMap = number[][];
 
@@ -10,9 +11,11 @@
     let glyphPixmaps = $state<PixelMap[]>([]);
 
     // Add new state variables for the controls
-    let startingGlyph = $state(20);
-    let glyphCount = $state(100);
+    let startingGlyph = $state(65);
+    let glyphCount = $state(26);
     let glyphSize = $state(48);
+    let currentRenderSize = $state(48);
+    let displayScale = $state(1);
 
     async function handleLoadFont() {
         try {
@@ -48,13 +51,14 @@
         if (!selectedFont) return;
 
         glyphPixmaps = [];
+        currentRenderSize = glyphSize;
 
         const channel = new Channel<number[][]>();
 
-        channel.onmessage = (pixmap: number[][]) => {
+        channel.onmessage = async (pixmap: number[][]) => {
             console.log(pixmap);
             pixmap = centerPixmap(pixmap, glyphSize, glyphSize);
-            glyphPixmaps = [...glyphPixmaps, pixmap];
+            glyphPixmaps.push(pixmap);
         };
 
         try {
@@ -120,24 +124,54 @@
             />
         </div>
 
+        <div class="scale-controls">
+            <button
+                onclick={() =>
+                    (displayScale = Math.max(displayScale - 0.5, 0.5))}
+                disabled={displayScale <= 0.5}
+            >
+                -
+            </button>
+            <span>{displayScale}x</span>
+            <button
+                onclick={() => (displayScale = Math.min(displayScale + 0.5, 4))}
+                disabled={displayScale >= 4}
+            >
+                +
+            </button>
+        </div>
+
         <button onclick={handleRasterize} disabled={!selectedFont}>
             Rasterize
         </button>
     </div>
 
-    <div class="glyph-grid">
+    <div
+        class="glyph-grid"
+        style:grid-template-columns="repeat(auto-fill, {currentRenderSize *
+            1.2 *
+            displayScale}px)"
+    >
         {#each glyphPixmaps as pixmap}
-            <div class="glyph-card">
+            <div
+                class="glyph-card"
+                style:width="{currentRenderSize * 1.2 * displayScale}px"
+                style:height="{currentRenderSize * 1.2 * displayScale}px"
+            >
                 <div
                     class="pixel-grid"
-                    style:grid-template-columns="repeat({pixmap[0].length}, 1fr)"
-                    style:grid-template-rows="repeat({pixmap.length}, 1fr)"
+                    style:width="{currentRenderSize * displayScale}px"
+                    style:height="{currentRenderSize * displayScale}px"
+                    style:grid-template-columns="repeat({pixmap[0].length}, {displayScale}px)"
+                    style:grid-template-rows="repeat({pixmap.length}, {displayScale}px)"
                 >
                     {#each pixmap as row}
                         {#each row as pixel}
                             <div
                                 class="pixel"
                                 style:background-color="rgb({pixel},{pixel},{pixel})"
+                                style:width="{displayScale}px"
+                                style:height="{displayScale}px"
                             ></div>
                         {/each}
                     {/each}
@@ -195,25 +229,25 @@
 
     .glyph-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
         gap: 16px;
     }
 
     .glyph-card {
-        aspect-ratio: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
         padding: 8px;
         border: 1px solid #ccc;
         border-radius: 4px;
+        box-sizing: border-box;
     }
 
     .pixel-grid {
-        width: 100%;
-        height: 100%;
         display: grid;
     }
 
     .pixel {
-        width: 100%;
-        height: 100%;
+        width: 1px;
+        height: 1px;
     }
 </style>
