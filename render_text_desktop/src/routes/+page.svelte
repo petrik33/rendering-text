@@ -73,14 +73,14 @@
         }
 
         const pixelGlyphSize = glyphSize * displayScale;
-        const spacing = 16;
-        const glyphAdvance = pixelGlyphSize + spacing;
+        const spacing = 8;
+        const glyphAdvance = pixelGlyphSize + spacing * 2;
 
         // Get the actual display width first
         const displayWidth = canvas.clientWidth;
 
         // Calculate grid dimensions using display width
-        const gridCols = Math.floor((displayWidth - spacing) / glyphAdvance);
+        const gridCols = Math.floor(displayWidth / glyphAdvance);
         const gridRows = Math.ceil(pixmaps.length / gridCols);
 
         function resizeCanvas(width: number, height: number) {
@@ -96,7 +96,7 @@
         }
 
         // Calculate desired height and resize canvas
-        const desiredHeight = gridRows * glyphAdvance + spacing;
+        const desiredHeight = gridRows * glyphAdvance;
         resizeCanvas(displayWidth, desiredHeight);
 
         const textureWidth = glyphSize * gridCols;
@@ -172,8 +172,8 @@
             const gridX = i % gridCols;
             const gridY = Math.floor(i / gridCols);
 
-            const pixelX = spacing + gridX * glyphAdvance;
-            const pixelY = spacing / 2 + gridY * glyphAdvance;
+            const pixelX = gridX * glyphAdvance;
+            const pixelY = gridY * glyphAdvance;
 
             const x = (pixelX / canvas.width) * 2 - 1;
             const y = 1 - (2 * pixelY) / canvas.height;
