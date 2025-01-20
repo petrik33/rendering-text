@@ -3,6 +3,8 @@
     import { open } from "@tauri-apps/plugin-dialog";
     import { centerPixmap } from "$lib/utils/pixmap";
     import { onMount } from "svelte";
+    import vertexShaderSource from "./shaders/glyph/vertex.glsl?raw";
+    import fragmentShaderSource from "./shaders/glyph/fragment.glsl?raw";
 
     type PixelMap = number[][];
 
@@ -10,15 +12,196 @@
     let selectedFont = $state("");
     let glyphPixmaps = $state<PixelMap[]>([]);
 
-    // Add new state variables for the controls
     let startingGlyph = $state(65);
     let glyphCount = $state(26);
     let glyphSize = $state(48);
     let currentRenderSize = $state(48);
     let displayScale = $state(1);
 
+    let canvas: HTMLCanvasElement;
+    let gl: WebGLRenderingContext;
+
+    async function initializeWebGL() {
+        canvas = document.getElementById("glyph-canvas") as HTMLCanvasElement;
+        gl = canvas.getContext("webgl") as WebGLRenderingContext;
+
+        if (!gl) {
+            throw new Error("WebGL not supported");
+        }
+    }
+
+    async function renderGlyphsWebGL(pixmaps: PixelMap[]) {
+        if (!gl) return;
+
+        function createShader(type: number, source: string) {
+            const shader = gl.createShader(type)!;
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(
+                    `Shader compile error: ${gl.getShaderInfoLog(shader)}`,
+                );
+            }
+            return shader;
+        }
+
+        const vertexShader = createShader(gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = createShader(
+            gl.FRAGMENT_SHADER,
+            fragmentShaderSource,
+        );
+
+        // Create program
+        const program = gl.createProgram()!;
+        if (!program) {
+            throw new Error("Failed to create WebGL program");
+        }
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(
+                `Program link error: ${gl.getProgramInfoLog(program)}`,
+            );
+        }
+
+        // Calculate grid dimensions
+        const numGlyphs = pixmaps.length;
+        const gridCols = Math.ceil(Math.sqrt(numGlyphs));
+        const gridRows = Math.ceil(numGlyphs / gridCols);
+
+        // Create texture with grid layout
+        const textureWidth = glyphSize * gridCols;
+        const textureHeight = glyphSize * gridRows;
+        const textureData = new Uint8Array(textureWidth * textureHeight);
+
+        // Fill texture data in grid pattern
+        pixmaps.forEach((pixmap, index) => {
+            const gridX = (index % gridCols) * glyphSize;
+            const gridY = Math.floor(index / gridCols) * glyphSize;
+
+            for (let y = 0; y < glyphSize; y++) {
+                for (let x = 0; x < glyphSize; x++) {
+                    const texIndex = (gridY + y) * textureWidth + (gridX + x);
+                    textureData[texIndex] = pixmap[y][x];
+                }
+            }
+        });
+
+        // Create and set up texture
+        const texture = gl.createTexture();
+        if (!texture) {
+            throw new Error("Failed to create texture");
+        }
+
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.LUMINANCE,
+            textureWidth,
+            textureHeight,
+            0,
+            gl.LUMINANCE,
+            gl.UNSIGNED_BYTE,
+            textureData,
+        );
+
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        // Create vertex buffer
+        const vertexBuffer = gl.createBuffer();
+        if (!vertexBuffer) {
+            throw new Error("Failed to create vertex buffer");
+        }
+
+        // Set up attributes
+        const positionLocation = gl.getAttribLocation(program, "a_position");
+        const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+
+        gl.enableVertexAttribArray(positionLocation);
+        gl.enableVertexAttribArray(texCoordLocation);
+
+        // Setup render state
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.useProgram(program);
+
+        // Get and set uniforms
+        const gridSizeLocation = gl.getUniformLocation(program, "u_gridSize");
+        const glyphIndexLocation = gl.getUniformLocation(
+            program,
+            "u_glyphIndex",
+        );
+
+        gl.uniform2f(gridSizeLocation, gridCols, gridRows);
+
+        // Calculate spacing with padding
+        const padding = 0.1;
+        const spacing = (2.0 / gridCols) * (1 - padding);
+
+        // Render each glyph
+        for (let i = 0; i < pixmaps.length; i++) {
+            const gridX = i % gridCols;
+            const gridY = Math.floor(i / gridCols);
+
+            // Calculate position in grid
+            const x = (gridX / gridCols) * 2 - 1 + spacing / 2;
+            const y = 1 - (gridY / gridRows) * 2 - spacing / 2;
+
+            // Create vertices for this glyph
+            const glyphVertices = new Float32Array([
+                // Position           // Texcoord
+                x - spacing / 2,
+                y - spacing / 2,
+                0,
+                1, // bottom-left
+                x + spacing / 2,
+                y - spacing / 2,
+                1,
+                1, // bottom-right
+                x + spacing / 2,
+                y + spacing / 2,
+                1,
+                0, // top-right
+                x - spacing / 2,
+                y + spacing / 2,
+                0,
+                0, // top-left
+            ]);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, glyphVertices, gl.STATIC_DRAW);
+
+            gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 16, 0);
+            gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 16, 8);
+
+            // Set the glyph index for the shader
+            gl.uniform2f(glyphIndexLocation, gridX, gridY);
+
+            // Draw the glyph
+            gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+        }
+
+        // Cleanup
+        gl.deleteBuffer(vertexBuffer);
+        gl.deleteTexture(texture);
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+        gl.deleteProgram(program);
+    }
+
     onMount(async () => {
         try {
+            await initializeWebGL();
+
             const fontName = await invoke<string>("load_font", {
                 path: "assets/Roboto-Regular.ttf",
             });
@@ -71,9 +254,12 @@
         const channel = new Channel<number[][]>();
 
         channel.onmessage = async (pixmap: number[][]) => {
-            console.log(pixmap);
             pixmap = centerPixmap(pixmap, glyphSize, glyphSize);
             glyphPixmaps.push(pixmap);
+
+            if (glyphPixmaps.length === glyphCount) {
+                await renderGlyphsWebGL(glyphPixmaps);
+            }
         };
 
         try {
