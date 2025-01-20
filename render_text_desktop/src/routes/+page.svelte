@@ -17,6 +17,7 @@
     let glyphSize = $state(48);
     let currentRenderSize = $state(48);
     let displayScale = $state(1);
+    let canvasHeight = $state(0);
 
     let canvas: HTMLCanvasElement;
     let gl: WebGLRenderingContext;
@@ -31,6 +32,10 @@
     }
 
     async function renderGlyphsWebGL(pixmaps: PixelMap[]) {
+        const VERTEX_SIZE = 4;
+        const FLOAT_SIZE = 4;
+        const STRIDE = VERTEX_SIZE * FLOAT_SIZE;
+
         if (!gl) return;
 
         function createShader(type: number, source: string) {
@@ -67,17 +72,25 @@
             );
         }
 
-        // Calculate grid dimensions
-        const numGlyphs = pixmaps.length;
-        const gridCols = Math.ceil(Math.sqrt(numGlyphs));
-        const gridRows = Math.ceil(numGlyphs / gridCols);
+        const pixelGlyphSize = glyphSize;
+        const spacing = 16;
+        const glyphAdvance = pixelGlyphSize + spacing;
+
+        const gridCols = Math.floor((canvas.width - spacing) / glyphAdvance);
+        const gridRows = Math.ceil(pixmaps.length / gridCols);
+
+        const totalGridWidth = gridCols * glyphAdvance + spacing;
+        const startX = spacing;
+
+        const totalGridHeight = gridRows * (glyphSize + spacing);
+        canvasHeight = totalGridHeight + spacing * 2;
+        canvas.height = canvasHeight;
 
         // Create texture with grid layout
         const textureWidth = glyphSize * gridCols;
         const textureHeight = glyphSize * gridRows;
         const textureData = new Uint8Array(textureWidth * textureHeight);
 
-        // Fill texture data in grid pattern
         pixmaps.forEach((pixmap, index) => {
             const gridX = (index % gridCols) * glyphSize;
             const gridY = Math.floor(index / gridCols) * glyphSize;
@@ -109,8 +122,8 @@
             textureData,
         );
 
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
@@ -143,38 +156,47 @@
 
         gl.uniform2f(gridSizeLocation, gridCols, gridRows);
 
-        // Calculate spacing with padding
-        const padding = 0.1;
-        const spacing = (2.0 / gridCols) * (1 - padding);
+        const textureLocation = gl.getUniformLocation(program, "u_texture");
+        gl.uniform1i(textureLocation, 0);
 
-        // Render each glyph
         for (let i = 0; i < pixmaps.length; i++) {
             const gridX = i % gridCols;
             const gridY = Math.floor(i / gridCols);
 
-            // Calculate position in grid
-            const x = (gridX / gridCols) * 2 - 1 + spacing / 2;
-            const y = 1 - (gridY / gridRows) * 2 - spacing / 2;
+            // Calculate position in clip space
+            const pixelX = startX + gridX * glyphAdvance;
+            const pixelY = spacing + gridY * glyphAdvance;
 
-            // Create vertices for this glyph
+            const x = (pixelX / canvas.width) * 2 - 1;
+            const y = 1 - (2 * pixelY) / canvas.height; // Fixed Y calculation
+
+            const glyphWidthClipSpace = (pixelGlyphSize / canvas.width) * 2;
+            const glyphHeightClipSpace = (pixelGlyphSize / canvas.height) * 2;
+
+            // Calculate texture coordinates for this glyph
+            const texX = gridX / gridCols;
+            const texY = gridY / gridRows;
+            const texWidth = 1.0 / gridCols;
+            const texHeight = 1.0 / gridRows;
+
             const glyphVertices = new Float32Array([
-                // Position           // Texcoord
-                x - spacing / 2,
-                y - spacing / 2,
-                0,
-                1, // bottom-left
-                x + spacing / 2,
-                y - spacing / 2,
-                1,
-                1, // bottom-right
-                x + spacing / 2,
-                y + spacing / 2,
-                1,
-                0, // top-right
-                x - spacing / 2,
-                y + spacing / 2,
-                0,
-                0, // top-left
+                // Position (x,y)    // Texcoord (u,v)
+                x,
+                y - glyphHeightClipSpace,
+                texX,
+                texY + texHeight, // bottom-left
+                x + glyphWidthClipSpace,
+                y - glyphHeightClipSpace,
+                texX + texWidth,
+                texY + texHeight, // bottom-right
+                x + glyphWidthClipSpace,
+                y,
+                texX + texWidth,
+                texY, // top-right
+                x,
+                y,
+                texX,
+                texY, // top-left
             ]);
 
             gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
@@ -183,10 +205,6 @@
             gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 16, 0);
             gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 16, 8);
 
-            // Set the glyph index for the shader
-            gl.uniform2f(glyphIndexLocation, gridX, gridY);
-
-            // Draw the glyph
             gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
         }
 
