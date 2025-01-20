@@ -17,7 +17,7 @@
     let glyphSize = $state(48);
     let currentRenderSize = $state(48);
     let displayScale = $state(1);
-    let canvasHeight = $state(0);
+    let displayScaleInput = $state(1);
 
     let canvas: HTMLCanvasElement;
     let gl: WebGLRenderingContext;
@@ -72,21 +72,33 @@
             );
         }
 
-        const pixelGlyphSize = glyphSize;
+        const pixelGlyphSize = glyphSize * displayScale;
         const spacing = 16;
         const glyphAdvance = pixelGlyphSize + spacing;
 
-        const gridCols = Math.floor((canvas.width - spacing) / glyphAdvance);
+        // Get the actual display width first
+        const displayWidth = canvas.clientWidth;
+
+        // Calculate grid dimensions using display width
+        const gridCols = Math.floor((displayWidth - spacing) / glyphAdvance);
         const gridRows = Math.ceil(pixmaps.length / gridCols);
 
-        const totalGridWidth = gridCols * glyphAdvance + spacing;
-        const startX = spacing;
+        function resizeCanvas(width: number, height: number) {
+            const dpr = window.devicePixelRatio || 1;
 
-        const totalGridHeight = gridRows * (glyphSize + spacing);
-        canvasHeight = totalGridHeight + spacing * 2;
-        canvas.height = canvasHeight;
+            // Set buffer size (internal resolution)
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
 
-        // Create texture with grid layout
+            // Set display size (CSS pixels)
+            canvas.style.width = `${width}px`;
+            canvas.style.height = `${height}px`;
+        }
+
+        // Calculate desired height and resize canvas
+        const desiredHeight = gridRows * glyphAdvance + spacing;
+        resizeCanvas(displayWidth, desiredHeight);
+
         const textureWidth = glyphSize * gridCols;
         const textureHeight = glyphSize * gridRows;
         const textureData = new Uint8Array(textureWidth * textureHeight);
@@ -147,37 +159,28 @@
 
         gl.useProgram(program);
 
-        // Get and set uniforms
-        const gridSizeLocation = gl.getUniformLocation(program, "u_gridSize");
-        const glyphIndexLocation = gl.getUniformLocation(
-            program,
-            "u_glyphIndex",
-        );
-
-        gl.uniform2f(gridSizeLocation, gridCols, gridRows);
-
         const textureLocation = gl.getUniformLocation(program, "u_texture");
         gl.uniform1i(textureLocation, 0);
+
+        const glyphWidthClipSpace = (glyphAdvance / canvas.width) * 2;
+        const glyphHeightClipSpace = (glyphAdvance / canvas.height) * 2;
+
+        const texWidth = 1.0 / gridCols;
+        const texHeight = 1.0 / gridRows;
 
         for (let i = 0; i < pixmaps.length; i++) {
             const gridX = i % gridCols;
             const gridY = Math.floor(i / gridCols);
 
-            // Calculate position in clip space
-            const pixelX = startX + gridX * glyphAdvance;
-            const pixelY = spacing + gridY * glyphAdvance;
+            const pixelX = spacing + gridX * glyphAdvance;
+            const pixelY = spacing / 2 + gridY * glyphAdvance;
 
             const x = (pixelX / canvas.width) * 2 - 1;
-            const y = 1 - (2 * pixelY) / canvas.height; // Fixed Y calculation
-
-            const glyphWidthClipSpace = (pixelGlyphSize / canvas.width) * 2;
-            const glyphHeightClipSpace = (pixelGlyphSize / canvas.height) * 2;
+            const y = 1 - (2 * pixelY) / canvas.height;
 
             // Calculate texture coordinates for this glyph
             const texX = gridX / gridCols;
             const texY = gridY / gridRows;
-            const texWidth = 1.0 / gridCols;
-            const texHeight = 1.0 / gridRows;
 
             const glyphVertices = new Float32Array([
                 // Position (x,y)    // Texcoord (u,v)
@@ -268,6 +271,7 @@
 
         glyphPixmaps = [];
         currentRenderSize = glyphSize;
+        displayScale = displayScaleInput;
 
         const channel = new Channel<number[][]>();
 
@@ -346,15 +350,19 @@
         <div class="scale-controls">
             <button
                 onclick={() =>
-                    (displayScale = Math.max(displayScale - 0.5, 0.5))}
-                disabled={displayScale <= 0.5}
+                    (displayScaleInput = Math.max(
+                        displayScaleInput - 0.5,
+                        0.5,
+                    ))}
+                disabled={displayScaleInput <= 0.5}
             >
                 -
             </button>
-            <span>{displayScale}x</span>
+            <span>{displayScaleInput}x</span>
             <button
-                onclick={() => (displayScale = Math.min(displayScale + 0.5, 4))}
-                disabled={displayScale >= 4}
+                onclick={() =>
+                    (displayScaleInput = Math.min(displayScaleInput + 0.5, 4))}
+                disabled={displayScaleInput >= 4}
             >
                 +
             </button>
