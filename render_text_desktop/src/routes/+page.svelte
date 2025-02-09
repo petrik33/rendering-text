@@ -15,7 +15,6 @@
     let startingGlyph = $state(65);
     let glyphCount = $state(26);
     let glyphSize = $state(48);
-    let currentRenderSize = $state(48);
     let displayScale = $state(1);
     let displayScaleInput = $state(1);
 
@@ -291,7 +290,6 @@
         if (!selectedFont) return;
 
         glyphPixmaps = [];
-        currentRenderSize = glyphSize;
         displayScale = displayScaleInput;
 
         const channel = new Channel<number[][]>();
@@ -395,39 +393,6 @@
     </div>
 
     <div class="glyph-container">
-        <div
-            class="glyph-grid"
-            style:grid-template-columns="repeat(auto-fill, {currentRenderSize *
-                1.2 *
-                displayScale}px)"
-        >
-            {#each glyphPixmaps as pixmap}
-                <div
-                    class="glyph-card"
-                    style:width="{currentRenderSize * 1.2 * displayScale}px"
-                    style:height="{currentRenderSize * 1.2 * displayScale}px"
-                >
-                    <div
-                        class="pixel-grid"
-                        style:width="{currentRenderSize * displayScale}px"
-                        style:height="{currentRenderSize * displayScale}px"
-                        style:grid-template-columns="repeat({pixmap[0].length}, {displayScale}px)"
-                        style:grid-template-rows="repeat({pixmap.length}, {displayScale}px)"
-                    >
-                        {#each pixmap as row}
-                            {#each row as pixel}
-                                <div
-                                    class="pixel"
-                                    style:background-color="rgb({pixel},{pixel},{pixel})"
-                                    style:width="{displayScale}px"
-                                    style:height="{displayScale}px"
-                                ></div>
-                            {/each}
-                        {/each}
-                    </div>
-                </div>
-            {/each}
-        </div>
         <canvas id="glyph-canvas"></canvas>
     </div>
 </main>
@@ -479,39 +444,11 @@
     }
 
     .glyph-container {
-        display: flex;
         width: 100%;
     }
 
-    .glyph-grid {
-        flex: 1;
-        min-width: 0;
-        display: grid;
-        gap: 16px;
-        grid-row-gap: 4px;
-    }
-
     #glyph-canvas {
-        flex: 1;
-        min-width: 0;
-    }
-
-    .glyph-card {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 8px;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        box-sizing: border-box;
-    }
-
-    .pixel-grid {
-        display: grid;
-    }
-
-    .pixel {
-        width: 1px;
-        height: 1px;
+        width: 100%;
+        height: auto;
     }
 </style>
