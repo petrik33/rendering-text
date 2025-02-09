@@ -1,5 +1,7 @@
 mod state;
 
+use std::{path::PathBuf, sync::Mutex};
+
 use rusttype::{point, Font};
 use state::FontsState;
 use tauri::State;
@@ -8,7 +10,7 @@ type RasterizedGlyph = Vec<Vec<u8>>;
 
 #[tauri::command]
 async fn rasterize_glyphs(
-    state: State<'_, FontsState>,
+    state: State<'_, Mutex<FontsState>>,
     font_name: String,
     starting_glyph: u32,
     glyph_count: u32,
@@ -16,7 +18,7 @@ async fn rasterize_glyphs(
     glyph_height: f32,
     channel: tauri::ipc::Channel<RasterizedGlyph>,
 ) -> Result<(), String> {
-    let state = state.lock().await;
+    let state = state.lock().unwrap();
     let font = state.loaded_fonts.get(&font_name).ok_or("Font not found")?;
     let scale = rusttype::Scale {
         y: glyph_height,
@@ -54,10 +56,7 @@ async fn rasterize_glyphs(
 }
 
 #[tauri::command]
-async fn load_font(
-    path: std::path::PathBuf,
-    state: State<'_, FontsState>,
-) -> Result<String, String> {
+fn load_font(path: PathBuf, state: State<'_, Mutex<FontsState>>) -> Result<String, String> {
     let data = std::fs::read(&path)
         .map_err(|err| format!("Failed to read font file '{}': {}", path.display(), err))?;
 
@@ -70,7 +69,7 @@ async fn load_font(
         .unwrap_or("Unknown Font")
         .to_string();
 
-    let mut state = state.lock().await;
+    let mut state = state.lock().unwrap();
     state.loaded_fonts.insert(font_name.clone(), font);
 
     Ok(font_name)
@@ -79,7 +78,7 @@ async fn load_font(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(FontsState::default())
+        .manage(Mutex::new(FontsState::default()))
         .invoke_handler(tauri::generate_handler![load_font, rasterize_glyphs])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
