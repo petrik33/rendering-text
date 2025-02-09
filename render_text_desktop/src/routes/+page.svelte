@@ -22,19 +22,11 @@
     let canvas: HTMLCanvasElement;
     let gl: WebGLRenderingContext;
 
-    async function initializeWebGL() {
-        canvas = document.getElementById("glyph-canvas") as HTMLCanvasElement;
-        gl = canvas.getContext("webgl") as WebGLRenderingContext;
-
-        if (!gl) {
-            throw new Error("WebGL not supported");
-        }
-    }
-
     async function renderGlyphsWebGL(pixmaps: PixelMap[]) {
         const VERTEX_SIZE = 4;
         const FLOAT_SIZE = 4;
         const STRIDE = VERTEX_SIZE * FLOAT_SIZE;
+        const spacing = 8;
 
         if (!gl) return;
 
@@ -56,7 +48,6 @@
             fragmentShaderSource,
         );
 
-        // Create program
         const program = gl.createProgram()!;
         if (!program) {
             throw new Error("Failed to create WebGL program");
@@ -73,31 +64,18 @@
         }
 
         const pixelGlyphSize = glyphSize * displayScale;
-        const spacing = 8;
         const glyphAdvance = pixelGlyphSize + spacing * 2;
 
-        // Get the actual display width first
-        const displayWidth = canvas.clientWidth;
+        let width = canvas.clientWidth;
 
-        // Calculate grid dimensions using display width
-        const gridCols = Math.floor(displayWidth / glyphAdvance);
+        const gridCols = Math.floor(width / glyphAdvance);
         const gridRows = Math.ceil(pixmaps.length / gridCols);
 
-        function resizeCanvas(width: number, height: number) {
-            const dpr = window.devicePixelRatio || 1;
+        let height = gridRows * glyphAdvance;
 
-            // Set buffer size (internal resolution)
-            canvas.width = width * dpr;
-            canvas.height = height * dpr;
-
-            // Set display size (CSS pixels)
-            canvas.style.width = `${width}px`;
-            canvas.style.height = `${height}px`;
-        }
-
-        // Calculate desired height and resize canvas
-        const desiredHeight = gridRows * glyphAdvance;
-        resizeCanvas(displayWidth, desiredHeight);
+        canvas.width = width;
+        canvas.height = height;
+        canvas.style.height = `${height}px`;
 
         const textureWidth = glyphSize * gridCols;
         const textureHeight = glyphSize * gridRows;
@@ -219,10 +197,23 @@
         gl.deleteProgram(program);
     }
 
-    onMount(async () => {
-        try {
-            await initializeWebGL();
+    onMount(() => {
+        let resizeTimeout: number;
+        let resizeObserver: ResizeObserver | null = null;
+        const resizeRerenderDebounceMs = 250;
 
+        async function initializeWebGL() {
+            canvas = document.getElementById(
+                "glyph-canvas",
+            ) as HTMLCanvasElement;
+            gl = canvas.getContext("webgl") as WebGLRenderingContext;
+
+            if (!gl) {
+                throw new Error("WebGL not supported");
+            }
+        }
+
+        async function loadDefaultFont() {
             const fontName = await invoke<string>("load_font", {
                 path: "assets/Roboto-Regular.ttf",
             });
@@ -231,9 +222,39 @@
                 loadedFonts.push(fontName);
                 selectedFont = fontName;
             }
-        } catch (error) {
-            console.error("Error loading default font:", error);
         }
+
+        function observeWindowResize() {
+            resizeObserver = new ResizeObserver((entries) => {
+                for (const entry of entries) {
+                    if (entry.target === canvas && glyphPixmaps.length > 0) {
+                        window.clearTimeout(resizeTimeout);
+                        resizeTimeout = window.setTimeout(async () => {
+                            await renderGlyphsWebGL(glyphPixmaps);
+                        }, resizeRerenderDebounceMs);
+                    }
+                }
+            });
+
+            resizeObserver.observe(canvas);
+        }
+
+        async function initialize() {
+            try {
+                await initializeWebGL();
+                await loadDefaultFont();
+                observeWindowResize();
+            } catch (error) {
+                console.error("Error loading default font:", error);
+            }
+        }
+
+        initialize();
+
+        return () => {
+            window.clearTimeout(resizeTimeout);
+            resizeObserver?.disconnect();
+        };
     });
 
     async function handleLoadFont() {
@@ -464,7 +485,7 @@
 
     .glyph-grid {
         flex: 1;
-        width: 50%;
+        min-width: 0;
         display: grid;
         gap: 16px;
         grid-row-gap: 4px;
@@ -472,7 +493,7 @@
 
     #glyph-canvas {
         flex: 1;
-        width: 50%;
+        min-width: 0;
     }
 
     .glyph-card {
